@@ -55,15 +55,15 @@ for part in ['a', 'b', 'c', 'd']:
 
         # send rows with missing pow to dm
         dm = dm.append(d[d['POWSP'].isna()])
-        # send rows with pow=st OR  to dct_pow[st]
+        # send rows with pow=st to dct_pow[st]
         t0 = time()
         for st in set(d[~d['POWSP'].isna()]['POWSP']):
             # below is done also for overseas pow code.
             # when saving output, they'll be lumped together as a single file
             if st in dct_pow[part].keys():
-                dct_pow[part][st] = dct_pow[part][st].append(d[(d['POWSP']==st) | (d['ST']==st)])
+                dct_pow[part][st] = dct_pow[part][st].append(d[d['POWSP']==st])
             else:
-                dct_pow[part][st] = d[(d['POWSP']==st) | (d['ST']==st)]
+                dct_pow[part][st] = d[d['POWSP']==st]
         t1 = time()
         print('All person rows in current chunk sent to dct_pow[st]. '
               'Time needed for this chunk = %s' % round((t1-t0), 0))
@@ -72,7 +72,7 @@ for part in ['a', 'b', 'c', 'd']:
         n = 0
         for st in dct_pow[part].keys():
             n += len(dct_pow[part][st]) # total number of rows sent so far in current part
-        print('Number of person rows with valid POWSP or ST that were sent in current chunk = %s' % (n - n_sent_0))
+        print('Number of person rows with valid POWSP that were sent in current chunk = %s' % (n - n_sent_0))
         print('Number of person rows with missing POWSP that were sent in current chunk = %s' % (len(dm) - n_dm_0))
 
         t1_chunk = time()
@@ -167,7 +167,41 @@ for st in dct_st.keys():
         pass
 
 ## Compare total population in a state, state of living VS state of work
-# a dict to store results
+# get state-of-residence population from US files
+dct_pop_st = {}
+chunksize = 10 ** 6
+for part in ['a', 'b', 'c', 'd']:
+    dct_pop_st[part] = {}
+    for st in dct_st.keys():
+        dct_pop_st[part][st] = 0 # initiate pop = 0 for all states
+    # now go to each chunk of the part to get pop of each state
+    ichunk = 0
+    for d in pd.read_csv('./data/csv_pus/ss16pus%s.csv' % part, chunksize=chunksize):
+        ichunk += 1
+        t0_chunk = time()
+        # reduce sample to civilian employed (ESR=1/2)
+        # and have paid work (COW=1/2/3/4/5), including self-employed(COW=6/7)
+        d = d[((d['ESR'] == 1) | (d['ESR'] == 2)) &
+              ((d['COW'] == 1) | (d['COW'] == 2) | (d['COW'] == 3) | (d['COW'] == 4) | (d['COW'] == 5) |
+               (d['COW'] == 6) | (d['COW'] == 7))]
+        # send state resident pops to dict
+        for st in dct_st.keys():
+            dct_pop_st[part][st] += d[d['ST']==st]['PWGTP'].sum()
+        t1_chunk = time()
+        print('--------------------------------------------------------')
+        print('Pop data of all states in chunk %s of US file part %s has been sent in.'
+              % (ichunk, part),
+              '\n Time needed = %s seconds' % round((t1_chunk - t0_chunk), 0))
+        print('--------------------------------------------------------')
+# combine state resident pop data of 4 file parts
+dct_pop_st_parts = dct_pop_st.copy()
+dct_pop_st = {}
+for st in dct_st.keys():
+    dct_pop_st[st] = 0
+    for part in dct_pop_st_parts.keys():
+        dct_pop_st[st] += dct_pop_st_parts[part][st]
+
+# a dict to store results of state resident/worker pops
 dct_pop = {}
 # get state level numbers, send to dct_pop
 for st in dct_st.keys():
@@ -177,7 +211,7 @@ for st in dct_st.keys():
     if os.path.isfile(fp):
         d = pd.read_csv(fp)
         dct_pop[st] = {}
-        dct_pop[st]['worker_pop_residents'] = d[d['ST']==st]['PWGTP'].sum()
+        dct_pop[st]['worker_pop_residents'] = dct_pop_st[st]
         dct_pop[st]['worker_pop_workers'] = d[d['POWSP']==st]['PWGTP'].sum()
     print('Population of residents/workers sent to dct_pop for state %s (%s)' % (dct_st[st], st))
 # convert dct_pop to df
